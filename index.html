@@ -55,7 +55,7 @@
 <header class="topbar">
   <div class="brand">
     <h1>Ask Reevo first turn: today vs. proposals #1, #6, #7</h1>
-    <p>From composer focus to the first token. Click a step to see its internal processes. <b>Green</b> is proposed.</p>
+    <p>From opening a new chat to the first token. Click a step to see its internal processes. <b>Green</b> is proposed.</p>
   </div>
   <div class="controls">
     <div class="ctl"><span class="ctl-label">Flow</span>
@@ -102,10 +102,10 @@ const L = { browser: 0, realtime: 1, api: 2, temporal: 3 };
 // k: now = runs today · new = proposed · skip = leaves the send path when the proposal ships · note = context
 // A step with `next` shows its `t` today and `next` once the proposals are on.
 const NODES = [
-  { band: "focus", title: "On composer focus", text: "Runs when the Ask Reevo panel opens or the input gets focus, before the user has typed anything. Nothing here depends on the message." },
-  { id: "f0", lane: "browser", trigger: true, isNew: true, title: "Composer focused", sum: "Panel opens or the input gets focus", tags: ["#1", "#6", "#7"], steps: [
-    { k: "new", t: "Fires once per panel open, debounced" },
-    { k: "new", t: "One trigger starts #1, #6 and #7" } ] },
+  { band: "focus", title: "Before send", text: "#1 runs when the empty new-chat view appears. #6 and #7 run on the first keystroke. Nothing here depends on the message." },
+  { id: "f0", lane: "browser", trigger: true, isNew: true, title: "New-chat view opens", sum: "Page load or a New chat click", tags: ["#1"], steps: [
+    { k: "new", t: "Fires on every page load and New chat click; it costs the backend nothing, so it needs no limit" },
+    { k: "note", t: "On the console the composer is already focused when the page loads, so there is no separate focus event to hook" } ] },
   { id: "f1", lane: "browser", isNew: true, title: "chatId = crypto.randomUUID()", sum: "The webapp mints the chat id and opens the room socket now", tags: ["#1"], steps: [
     { k: "new", t: "Chat id generated in the browser instead of by <code>createChat()</code>" },
     { k: "new", t: "<code>new PartySocket({party: 'chat', room: chatId})</code> opened before send" },
@@ -114,23 +114,30 @@ const NODES = [
     { k: "new", t: "<code>authenticateConnection()</code> unseals <code>?session=</code> with IRON_SESSION_SECRET" },
     { k: "new", t: "The socket idles until the first <code>user_message</code> frame" },
     { k: "note", t: "Room join does no chat-existence check today, so it can run before the chat row exists" } ] },
-  { id: "f3", lane: "api", isNew: true, title: "POST /api/v1/chat/_prepare", sum: "{ chat_id } · all the work that does not need the message", tags: ["#1", "#6", "#7"], steps: [
+  { id: "fk", lane: "browser", trigger: true, isNew: true, title: "First keystroke", sum: "The user starts typing in the new chat", tags: ["#6", "#7"], steps: [
+    { k: "new", t: "Fires once per chat" },
+    { k: "note", t: "Typing arrives seconds before send. Frontend telemetry should confirm that lead time beats the ~1–2 s prepare" } ] },
+  { id: "f3", lane: "api", isNew: true, title: "POST /api/v1/chat/_prepare", sum: "{ chat_id } · all the work that does not need the message", tags: ["#6", "#7"], steps: [
     { k: "new", t: "Same Bearer access token as <code>_connect</code>" },
     { k: "new", t: "Rejects a <code>chat_id</code> owned by another user" },
-    { k: "new", t: "Rate limit: one prepare per user per 5 minutes" } ] },
+    { k: "new", t: "No per-user rate limit: a second new chat started a minute later must still get prepared. Each step below carries its own limit" } ] },
   { id: "f4", lane: "api", isNew: true, title: "Create chat row", sum: "The row exists before send, keyed on the browser's chat_id", tags: ["#7"], steps: [
     { k: "new", t: "Idempotent on <code>chat_id</code>, so a repeat prepare changes nothing" },
     { k: "note", t: "Product call: an empty prepared chat must stay out of the sidebar" } ] },
   { id: "f5", lane: "api", isNew: true, title: "Render static prompt + warm the cache", sum: "System prompt and static tools rendered; a 1-token request primes the provider's prefix cache", tags: ["#6"], steps: [
-    { k: "new", t: "<code>_resolve_turn_variant()</code> picks the variant" },
+    { k: "new", t: "Same <code>_resolve_turn_variant()</code> the send path runs: the model, static fragments and static tools all come from the variant" },
+    { k: "new", t: "Skips the warm-up when the same org + variant prefix was warmed within the provider's cache lifetime" },
     { k: "new", t: "Static fragments (system prompt, static tool definitions) rendered and cached for the dispatch" },
     { k: "new", t: "<code>max_tokens=1</code> request to the chat model with that prefix" },
     { k: "note", t: "Prod GTM first turns send ~88K tokens with a median 1% cached; later turns are 81% cached" },
-    { k: "note", t: "Costs ~$0.01–0.02 per cold warm-up, near zero when already warm" } ] },
+    { k: "note", t: "Costs ~$0.01–0.02 per cold warm-up, near zero when already warm" },
+    { k: "note", t: "Skipped for <code>chat_source=follow_up_email</code>: that variant depends on the exact query, which prepare does not have" } ] },
   { id: "f6", lane: "temporal", isNew: true, title: "start_workflow(ChatAgentWorkflow)", sum: "A prepared run does its prerequisites, then waits for the turn", tags: ["#7"], steps: [
     { k: "new", t: "<code>create_assistant_message_activity</code>: the empty assistant row" },
     { k: "new", t: "<code>build_chat_agent()</code> for the variant" },
     { k: "new", t: "<code>workflow.wait_condition()</code> until a Temporal Update carries the turn" },
+    { k: "new", t: "At most one prepared run per <code>chat_id</code>; a repeat prepare is a no-op, a new chat gets its own" },
+    { k: "note", t: "Not started on page load, which would start a workflow for every console visit" },
     { k: "note", t: "Never sent: times out after N minutes and completes. Worker dies: resumes. No socket or process is held open" },
     { k: "note", t: "~3–5 extra Temporal actions per prepared turn; the contract change sits behind <code>workflow.patched()</code>" } ] },
 
@@ -177,17 +184,18 @@ const NODES = [
     { k: "now", t: "<code>transport_config = chat_partykit_transport_config()</code>" },
     { k: "now", t: "<code>asyncio.gather(intent, carried state, history, flow-builder)</code>" },
     { k: "now", t: "<code>deps = ChatAgentDeps(...)</code>: built once per turn; every tool reads it through ctx.deps" } ] },
-  { id: "s10", lane: "api", title: "_resolve_turn_variant()", sum: "Which model, prompt, skills and tools this turn gets", steps: [
+  { id: "s10", lane: "api", title: "_resolve_turn_variant()", sum: "Which model, prompt, skills and tools this turn gets", changed: ["#6"], steps: [
     { k: "now", t: "<code>ChatVariantService.get_variant_config()</code>: PostHog flag <code>chat-variant</code> payload" },
     { k: "now", t: "ChatRunConfig: model, prompt_fragments, system_skills, static_tools, deferred_tools, tool_overrides" },
-    { k: "now", t: "<code>apply_follow_up_draft_override()</code> · <code>mount_mcp_connector_tools()</code>" } ] },
+    { k: "now", t: "<code>apply_follow_up_draft_override()</code> · <code>mount_mcp_connector_tools()</code>" },
+    { k: "now", t: "The result is used as is", next: "The result is compared with the variant prepare used. A follow-up draft, a <code>chat-variant</code> flag change or a newly connected MCP connector makes them differ; the turn then renders as today and only loses the speedup", why: "#6" } ] },
   { id: "s11", lane: "api", title: "resolve_agent_query_intent()", sum: "Jev picks tools for the query", steps: [
     { k: "now", t: "<code>select_tools_with_jev()</code>: one TypeSafe request per selector, at most 8 tools" },
     { k: "now", t: "10 s timeout; on a miss the LanceDB fallback runs later in get_tools" },
     { k: "now", t: "Tools from CHAT_TOOL_REGISTRY: ToolSpec → ToolVersion (func, description, requires_approval)" } ] },
   { id: "s12", lane: "api", title: "ChatVariantService.render_system_prompt()", sum: "Fragments become the system prompt", changed: ["#6"], steps: [
     { k: "now", t: "Each fragment name → <code>PromptFragment(name, content, cadence)</code>" },
-    { k: "now", t: "Static cadence fragments rendered into the system prompt", next: "Static part reused from the render cached by <code>_prepare</code>", why: "#6" },
+    { k: "now", t: "Static cadence fragments rendered into the system prompt", next: "Static part reused from the render cached by <code>_prepare</code>, when the variant matches", why: "#6" },
     { k: "now", t: "per_turn and per_loop cadences render later" },
     { k: "now", t: "<code>select_catalog_skills()</code> → SkillService → AgentFSRepository" },
     { k: "now", t: "<code>message_history = [SystemPromptPart, ...history]</code>" } ] },
@@ -200,7 +208,7 @@ const NODES = [
     { k: "skip", t: "<code>temporal_client.start_workflow()</code>", why: "#7: the run already exists" },
     { k: "new", t: "Update payload: the message, intent, skill scores and message_history" },
     { k: "new", t: "The HTTP response to PartyKit waits for the Update to be accepted" },
-    { k: "note", t: "No prepared run (expired or never focused): falls back to <code>start_workflow()</code>" } ] },
+    { k: "note", t: "No prepared run (expired, not ready yet, or the user never typed before sending): falls back to <code>start_workflow()</code>" } ] },
   { id: "s14", lane: "temporal", title: "ChatAgentWorkflow._run_impl()", sum: "Prerequisites, then the agent run", changed: ["#7"], ms: { now: "Workflow start → model ~570 ms", next: "−0.3 to −0.5 s with #7" }, steps: [
     { k: "now", t: "New chat: title activity, not awaited → ChatTitleUpdateEvent" },
     { k: "skip", t: "<code>create_assistant_message_activity</code>, awaited; sends MessageStartEvent", why: "#7: done by the prepared run at focus" },
@@ -233,7 +241,7 @@ const NODES = [
 
 // style: main = today's flow · new = proposed flow · link = a focus step feeding a send step
 const EDGES = [
-  ["f0", "f1", "new"], ["f1", "f2", "new"], ["f1", "f3", "new"], ["f3", "f4", "new"], ["f4", "f5", "new"], ["f5", "f6", "new"],
+  ["f0", "f1", "new"], ["f1", "f2", "new"], ["fk", "f3", "new"], ["f3", "f4", "new"], ["f4", "f5", "new"], ["f5", "f6", "new"],
   ["s0", "s1"], ["s1", "s2"], ["s2", "s3"], ["s3", "s4"], ["s4", "s5"], ["s5", "s6"], ["s6", "s7"], ["s7", "s8"],
   ["s8", "s9"], ["s9", "s10"], ["s10", "s11"], ["s11", "s12"],
   ["s12", "s13", "main", "today"], ["s13", "s14", "main", "today"],
