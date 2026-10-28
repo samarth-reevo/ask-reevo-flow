@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ask Reevo First-Turn Flow</title>
+<link rel="stylesheet" href="harness-viz.css" />
+<style>
+  /* Additions on top of harness-viz.css: lane accents, the proposed (green) state, lanes and bands. */
+  :root{ --new:#4fc26b; --browser:var(--meas); --realtime:var(--ext); --api:var(--out); --temporal:var(--exec) }
+  .c-browser{--accent:var(--browser)} .c-realtime{--accent:var(--realtime)}
+  .c-api{--accent:var(--api)} .c-temporal{--accent:var(--temporal)} .c-new{--accent:var(--new)}
+  .node{width:var(--colw)}
+  .node.c-new{background:color-mix(in srgb,var(--new) 10%,var(--panel));border-color:color-mix(in srgb,var(--new) 45%,var(--line))}
+  .node.c-new:hover{background:color-mix(in srgb,var(--new) 16%,var(--panel-2))}
+  .node.trigger{border-radius:999px;padding-left:16px}
+  .node.trigger::before{display:none}
+  .n-title{font-family:var(--mono);font-size:12px;font-weight:500;overflow-wrap:anywhere;padding-right:26px}
+  .node.c-new .n-title{color:#bdf0cb}
+  .n-foot{margin-top:5px;flex-wrap:wrap;row-gap:4px}
+  .n-metric{white-space:normal;line-height:1.35}
+  .n-badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+  .bdg{font-family:var(--mono);font-size:9.5px;border-radius:5px;padding:1px 5px;color:var(--new);
+    background:color-mix(in srgb,var(--new) 12%,var(--panel));border:1px solid color-mix(in srgb,var(--new) 35%,var(--line))}
+  .bdg.ms{color:var(--muted);background:var(--panel-2);border-color:var(--line)}
+  .n-sub{font-family:var(--mono);font-size:11px}
+  .lanehead{position:absolute;top:0;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+    display:flex;align-items:center;gap:7px}
+  .lanehead i{width:7px;height:7px;border-radius:2px;background:var(--accent)}
+  .laneline{position:absolute;top:22px;bottom:0;border-left:1px dashed var(--line);opacity:.8}
+  .band{position:absolute;left:0;right:0;display:flex;align-items:baseline;gap:12px;
+    border-top:1px solid var(--line);padding-top:9px}
+  .band h2{margin:0;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:#c9d4e4;font-weight:600;white-space:nowrap}
+  .band.new h2{color:var(--new)}
+  .band p{margin:0;font-size:11px;color:var(--faint)}
+  .edge.new{stroke:var(--new);stroke-width:1.7}
+  .edge.link{stroke:var(--new);stroke-dasharray:5 4;stroke-width:1.6}
+  .seg button.on.green{background:color-mix(in srgb,var(--new) 30%,#1e2938);color:#dff7e6}
+  .pb-stats b.g{color:#bdf0cb}
+  /* drawer step list */
+  .steps{display:grid;gap:0}
+  .dgm-box.new{border-color:color-mix(in srgb,var(--new) 55%,var(--line-2));background:color-mix(in srgb,var(--new) 10%,var(--panel));color:#cdeed7}
+  .dgm-box.skip{border-style:dashed;background:transparent;color:var(--faint)}
+  .dgm-box.skip .t{text-decoration:line-through}
+  .dgm-box .why{display:block;color:var(--new);font-size:10.5px;margin-top:3px}
+  .dgm-box code,.dgm-cap code,.dr-caption code{font-family:var(--mono);font-size:10.5px;color:#9fd0c8}
+  .dgm-box.new code{color:#bdf0cb}
+  .dgm-box.skip code{color:var(--faint)}
+  .dgm-cap{margin:6px 0 0;padding-left:10px;border-left:1px solid var(--line-2)}
+  .edge-label{font-size:9.5px;fill:var(--new);font-family:var(--font)}
+  @media (max-width:700px){ .legend{display:none} }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>Ask Reevo first turn: today vs. proposals #1, #6, #7</h1>
+    <p>From composer focus to the first token. Click a step to see its internal processes. <b>Green</b> is proposed.</p>
+  </div>
+  <div class="controls">
+    <div class="ctl"><span class="ctl-label">Flow</span>
+      <div class="seg" role="group" aria-label="Which flow to show">
+        <button id="mode-today" type="button">Today</button>
+        <button id="mode-next" type="button" class="on green">With #1, #6, #7</button>
+      </div>
+    </div>
+  </div>
+</header>
+<div class="pathbar">
+  <div class="pb-stats">
+    <span><b>4.58 s</b>prod client TTFT, GTM p50</span>
+    <span><b class="g">−1.0–1.2 s</b>#1 pre-connect</span>
+    <span><b class="g">−0.4–0.5 s</b>#6 warm prompt cache</span>
+    <span><b class="g">−0.3–0.5 s</b>#7 prepared workflow</span>
+  </div>
+  <div class="pb-right"><span>Estimates from the sign-off doc, not measurements. V2 runtime.</span></div>
+</div>
+<div id="stageWrap">
+  <div class="stage" id="stage"><div class="canvas" id="canvas"></div></div>
+</div>
+<aside class="legend" id="legend">
+  <button id="legendToggle" type="button">Legend</button>
+  <div class="legend-body">
+    <div class="lrow"><span class="swatch" style="background:var(--browser)"></span>Browser (webapp)</div>
+    <div class="lrow"><span class="swatch" style="background:var(--realtime)"></span>Realtime (PartyKit room)</div>
+    <div class="lrow"><span class="swatch" style="background:var(--api)"></span>Backend API</div>
+    <div class="lrow"><span class="swatch" style="background:var(--temporal)"></span>Temporal worker</div>
+    <div class="lrow"><span class="swatch" style="background:var(--new)"></span><b>Proposed step or change</b></div>
+    <div class="lrow"><span class="swatch" style="border:1px dashed var(--faint)"></span>Removed from the send path</div>
+  </div>
+</aside>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="dr-head" id="drHead"></div>
+  <div class="dr-body" id="drBody"></div>
+</aside>
+
+<script>
+const LANES = ["Browser (webapp)", "Realtime (PartyKit room)", "Backend API", "Temporal worker"];
+const LANE_KEYS = ["browser", "realtime", "api", "temporal"];
+const L = { browser: 0, realtime: 1, api: 2, temporal: 3 };
+
+// k: now = runs today · new = proposed · skip = leaves the send path when the proposal ships · note = context
+// A step with `next` shows its `t` today and `next` once the proposals are on.
+const NODES = [
+  { band: "focus", title: "On composer focus", text: "Runs when the Ask Reevo panel opens or the input gets focus, before the user has typed anything. Nothing here depends on the message." },
+  { id: "f0", lane: "browser", trigger: true, isNew: true, title: "Composer focused", sum: "Panel opens or the input gets focus", tags: ["#1", "#6", "#7"], steps: [
+    { k: "new", t: "Fires once per panel open, debounced" },
+    { k: "new", t: "One trigger starts #1, #6 and #7" } ] },
+  { id: "f1", lane: "browser", isNew: true, title: "chatId = crypto.randomUUID()", sum: "The webapp mints the chat id and opens the room socket now", tags: ["#1"], steps: [
+    { k: "new", t: "Chat id generated in the browser instead of by <code>createChat()</code>" },
+    { k: "new", t: "<code>new PartySocket({party: 'chat', room: chatId})</code> opened before send" },
+    { k: "note", t: "A client-side id means no empty chat row exists if the user never sends" } ] },
+  { id: "f2", lane: "realtime", isNew: true, title: "ChatParty.onConnect()", sum: "The room joins and authenticates before send", tags: ["#1"], steps: [
+    { k: "new", t: "<code>authenticateConnection()</code> unseals <code>?session=</code> with IRON_SESSION_SECRET" },
+    { k: "new", t: "The socket idles until the first <code>user_message</code> frame" },
+    { k: "note", t: "Room join does no chat-existence check today, so it can run before the chat row exists" } ] },
+  { id: "f3", lane: "api", isNew: true, title: "POST /api/v1/chat/_prepare", sum: "{ chat_id } · all the work that does not need the message", tags: ["#1", "#6", "#7"], steps: [
+    { k: "new", t: "Same Bearer access token as <code>_connect</code>" },
+    { k: "new", t: "Rejects a <code>chat_id</code> owned by another user" },
+    { k: "new", t: "Rate limit: one prepare per user per 5 minutes" } ] },
+  { id: "f4", lane: "api", isNew: true, title: "Create chat row", sum: "The row exists before send, keyed on the browser's chat_id", tags: ["#7"], steps: [
+    { k: "new", t: "Idempotent on <code>chat_id</code>, so a repeat prepare changes nothing" },
+    { k: "note", t: "Product call: an empty prepared chat must stay out of the sidebar" } ] },
+  { id: "f5", lane: "api", isNew: true, title: "Render static prompt + warm the cache", sum: "System prompt and static tools rendered; a 1-token request primes the provider's prefix cache", tags: ["#6"], steps: [
+    { k: "new", t: "<code>_resolve_turn_variant()</code> picks the variant" },
+    { k: "new", t: "Static fragments (system prompt, static tool definitions) rendered and cached for the dispatch" },
+    { k: "new", t: "<code>max_tokens=1</code> request to the chat model with that prefix" },
+    { k: "note", t: "Prod GTM first turns send ~88K tokens with a median 1% cached; later turns are 81% cached" },
+    { k: "note", t: "Costs ~$0.01–0.02 per cold warm-up, near zero when already warm" } ] },
+  { id: "f6", lane: "temporal", isNew: true, title: "start_workflow(ChatAgentWorkflow)", sum: "A prepared run does its prerequisites, then waits for the turn", tags: ["#7"], steps: [
+    { k: "new", t: "<code>create_assistant_message_activity</code>: the empty assistant row" },
+    { k: "new", t: "<code>build_chat_agent()</code> for the variant" },
+    { k: "new", t: "<code>workflow.wait_condition()</code> until a Temporal Update carries the turn" },
+    { k: "note", t: "Never sent: times out after N minutes and completes. Worker dies: resumes. No socket or process is held open" },
+    { k: "note", t: "~3–5 extra Temporal actions per prepared turn; the contract change sits behind <code>workflow.patched()</code>" } ] },
+
+  { band: "send", title: "On send", text: "Runs after the user hits send. With the proposals on, the struck-through steps have already happened at focus." },
+  { id: "s0", lane: "browser", trigger: true, title: "Prompt entered", sum: "The user hits send" },
+  { id: "s1", lane: "browser", title: "handleMessageSubmit()", sum: "prompt, chatSource, files, annotations", steps: [
+    { k: "now", t: "<code>usePaywall()</code> with resources <code>\"ASK_REEVO_MAIN\"</code> allows access" },
+    { k: "now", t: "prompt: str · chatSource: ChatTraceSource" },
+    { k: "now", t: "files: ChatFileParts · annotations: ChatAnnotations[]" } ] },
+  { id: "s2", lane: "browser", title: "ChatSession.submit()", sum: "input: str · options: ChatSubmitOptionsInput", steps: [
+    { k: "now", t: "state: <code>StoreAPI&lt;ChatSessionState&gt;</code>" },
+    { k: "now", t: "chat: <code>ReactChatState&lt;UIMessage&gt;</code>" },
+    { k: "now", t: "transport: <code>ChatSessionTransport</code>" } ] },
+  { id: "s3", lane: "browser", title: "transport.sendMessage()", sum: "parts: UIMessage['parts'] · body: ChatTraceSource", steps: [
+    { k: "now", t: "<code>Chat&lt;UIMessage&gt;</code>: chat-core's port of the AI SDK engine; holds messages and status" },
+    { k: "now", t: "<code>AbstractChat.sendMessage()</code> appends the user message, then calls <code>transport.sendMessages()</code>" },
+    { k: "now", t: "Transport: <code>PartyKitChatTransport</code>, one WebSocket per chat room" },
+    { k: "now", t: "Options from <code>buildChatTransportOptions()</code>: host, sealed-cookie auth, <code>getApplicationContext()</code>" } ] },
+  { id: "s4", lane: "browser", title: "PartyKitChatTransport.sendMessages()", sum: "Mints message_request_id and sends the user_message frame", changed: ["#1"],
+    ms: { now: "Pre-send ~1,200 ms", next: "≈0 with #1" }, steps: [
+    { k: "now", t: "Only the last message is sent; abortSignal; <code>body.chat_source</code>" },
+    { k: "skip", t: "<code>chatId == null</code> → <code>createChat()</code>: HTTP create, returns chat_id", why: "#1: the id was minted at focus" },
+    { k: "skip", t: "Socket closed or another chat → <code>connectWebSocket()</code> → <code>new PartySocket(...)</code>", why: "#1: the socket was opened at focus" },
+    { k: "now", t: "<code>ws.send({type: 'user_message', payload})</code>: chat_id, messages, application_context, application_bindings, message_request_id" },
+    { k: "note", t: "Today the two gates are awaited one after the other before the prompt leaves the browser" } ] },
+  { id: "s5", lane: "realtime", title: "ChatParty.onClientMessage()", sum: "One Durable Object per chat_id; queues the turn", changed: ["#1"], steps: [
+    { k: "skip", t: "<code>onConnect</code> → <code>authenticateConnection()</code> on the post-send clock", why: "#1: the room authenticated at focus" },
+    { k: "now", t: "Rejects a frame with no <code>message_request_id</code>" },
+    { k: "now", t: "<code>MessageQueue.tryProcessNext()</code>: one turn per room; lock held until DONE or ERROR" },
+    { k: "now", t: "Backend producer: <code>onBeforeConnect()</code>; Bearer must equal REEVO_REALTIME_TOKEN" } ] },
+  { id: "s6", lane: "realtime", title: "triggerAgentConnection()", sum: "backendFetch() POST _connect; awaited, no retry", ms: { now: "PartyKit → backend ~320 ms" }, steps: [
+    { k: "now", t: "payload: <code>ClientChatMessage</code>, forwarded unchanged" },
+    { k: "now", t: "Headers: Bearer access_token, x-reevo-org-id, x-reevo-user-id, x-reevo-api-key" },
+    { k: "now", t: "No explicit timeout; stop → <code>cancelChatStream()</code> → POST <code>/chat/_cancel</code>" } ] },
+  { id: "s7", lane: "api", title: "POST /api/v1/public/chat/_connect", sum: "connect_chat_public() · cloudflare_chat.py:254", steps: [
+    { k: "now", t: "ConnectChatRequest: chat_id, messages: ClientChatMessagesV2, application_context, chat_source" } ] },
+  { id: "s8", lane: "api", title: "ChatService.run_chat_temporal_agent()", sum: "Gates the turn, then dispatches it", steps: [
+    { k: "now", t: "Last message must be a UserChatMessage with text, a file or an annotation" },
+    { k: "now", t: "<code>ensure_ask_reevo_entitlement()</code>: ASK_REEVO_MAIN quota" },
+    { k: "now", t: "Approvals and deferred answers become Temporal signals (<code>_route_deferred_tool_response</code>)" },
+    { k: "now", t: "ROLLOUT_CHAT_AGENT_V3_OCT2026 orgs go to the V3 runtime" } ] },
+  { id: "s9", lane: "api", title: "_dispatch_chat_turn()", sum: "Persist, gather, build the turn's deps", ms: { now: "Input build ~1,430 ms, through render_system_prompt" }, steps: [
+    { k: "now", t: "<code>persist_user_message()</code>" },
+    { k: "now", t: "<code>transport_config = chat_partykit_transport_config()</code>" },
+    { k: "now", t: "<code>asyncio.gather(intent, carried state, history, flow-builder)</code>" },
+    { k: "now", t: "<code>deps = ChatAgentDeps(...)</code>: built once per turn; every tool reads it through ctx.deps" } ] },
+  { id: "s10", lane: "api", title: "_resolve_turn_variant()", sum: "Which model, prompt, skills and tools this turn gets", steps: [
+    { k: "now", t: "<code>ChatVariantService.get_variant_config()</code>: PostHog flag <code>chat-variant</code> payload" },
+    { k: "now", t: "ChatRunConfig: model, prompt_fragments, system_skills, static_tools, deferred_tools, tool_overrides" },
+    { k: "now", t: "<code>apply_follow_up_draft_override()</code> · <code>mount_mcp_connector_tools()</code>" } ] },
+  { id: "s11", lane: "api", title: "resolve_agent_query_intent()", sum: "Jev picks tools for the query", steps: [
+    { k: "now", t: "<code>select_tools_with_jev()</code>: one TypeSafe request per selector, at most 8 tools" },
+    { k: "now", t: "10 s timeout; on a miss the LanceDB fallback runs later in get_tools" },
+    { k: "now", t: "Tools from CHAT_TOOL_REGISTRY: ToolSpec → ToolVersion (func, description, requires_approval)" } ] },
+  { id: "s12", lane: "api", title: "ChatVariantService.render_system_prompt()", sum: "Fragments become the system prompt", changed: ["#6"], steps: [
+    { k: "now", t: "Each fragment name → <code>PromptFragment(name, content, cadence)</code>" },
+    { k: "now", t: "Static cadence fragments rendered into the system prompt", next: "Static part reused from the render cached by <code>_prepare</code>", why: "#6" },
+    { k: "now", t: "per_turn and per_loop cadences render later" },
+    { k: "now", t: "<code>select_catalog_skills()</code> → SkillService → AgentFSRepository" },
+    { k: "now", t: "<code>message_history = [SystemPromptPart, ...history]</code>" } ] },
+  { id: "s13", lane: "api", only: "today", title: "temporal_client.start_workflow()", sum: "Starts a new ChatAgentWorkflow for the turn", steps: [
+    { k: "now", t: "workflow: <code>ChatAgentWorkflow.run</code> on chat-task-queue" },
+    { k: "now", t: "ChatAgentWorkflowInput: chat_id, agent_deps, transport_config, message_history, variant_config, file_attachments" },
+    { k: "now", t: "id policy: TERMINATE_EXISTING" },
+    { k: "now", t: "The HTTP response to PartyKit waits for this call" } ] },
+  { id: "s13p", lane: "api", only: "next", isNew: true, title: "execute_update(deliver turn)", sum: "Hands the turn to the run prepared at focus", tags: ["#7"], steps: [
+    { k: "skip", t: "<code>temporal_client.start_workflow()</code>", why: "#7: the run already exists" },
+    { k: "new", t: "Update payload: the message, intent, skill scores and message_history" },
+    { k: "new", t: "The HTTP response to PartyKit waits for the Update to be accepted" },
+    { k: "note", t: "No prepared run (expired or never focused): falls back to <code>start_workflow()</code>" } ] },
+  { id: "s14", lane: "temporal", title: "ChatAgentWorkflow._run_impl()", sum: "Prerequisites, then the agent run", changed: ["#7"], ms: { now: "Workflow start → model ~570 ms", next: "−0.3 to −0.5 s with #7" }, steps: [
+    { k: "now", t: "New chat: title activity, not awaited → ChatTitleUpdateEvent" },
+    { k: "skip", t: "<code>create_assistant_message_activity</code>, awaited; sends MessageStartEvent", why: "#7: done by the prepared run at focus" },
+    { k: "now", t: "Attachments → <code>_prepare_turn_input()</code> folds files into history" },
+    { k: "now", t: "ChatAgentWorkflow → AgentExecutionWorkflowV2 → ApprovalWorkflowBase" } ] },
+  { id: "s15", lane: "temporal", title: "run_agent_with_approvals()", sum: "The agent loop, parking on approvals", steps: [
+    { k: "now", t: "temporal_agent: ReeTemporalAgent; deps, message_history, deferred_tool_results" },
+    { k: "now", t: "Loop: <code>temporal_agent.run(..., usage_limits=UsageLimits(request_limit))</code>" },
+    { k: "now", t: "DeferredToolRequests → <code>workflow.wait_condition()</code> until approve_tool or resolve_deferred" },
+    { k: "now", t: "UsageLimitExceeded → request_limit (default 100); request_stop → user_cancelled; final str → done" } ] },
+  { id: "s16", lane: "temporal", title: "temporal_agent.run() → get_tools", sum: "Builds the agent and picks its tools", changed: ["#7"], steps: [
+    { k: "now", t: "<code>build_chat_agent()</code> → Agent(output_type=[str, DeferredToolRequests], capabilities=[DynamicPromptBlock, PrepareTools, …])" },
+    { k: "skip", t: "Workflow side rebuilds the agent with the variant (<code>_run_inner</code>)", why: "#7: built by the prepared run at focus" },
+    { k: "now", t: "<code>select_agent_tools()</code>: static tools + Jev picks, cached in deps.selected_tool_names" } ] },
+  { id: "s17", lane: "temporal", title: "request_stream activity", sum: "The model call", changed: ["#6"], ms: { now: "Model TTFT ~840 ms", next: "−0.4 to −0.5 s with #6" }, steps: [
+    { k: "now", t: "messages + model_request_parameters (tool definitions) + deps" },
+    { k: "now", t: "The variant's model, via variant_model_registry" },
+    { k: "now", t: "Cold prefix: ~1.0 s to first token (63K-token probe)", next: "Prefix already cached by the warm-up: ~0.35–0.45 s", why: "#6" },
+    { k: "now", t: "pydantic-ai reads the first chunk before event_stream_handler runs" } ] },
+  { id: "s18", lane: "temporal", title: "WebSocketAdapter.on_events()", sum: "Streams frames to the room", steps: [
+    { k: "now", t: "<code>create_stream_handler()</code> → routing + metrics adapters" },
+    { k: "now", t: "<code>connect_producer()</code> opens a new socket per activity" },
+    { k: "now", t: "One frame per event, through XmlStreamFilterV2" } ] },
+  { id: "s19", lane: "realtime", title: "ChatParty.onAgentMessage()", sum: "Fans frames out to every browser", ms: { now: "Producer socket + paint ~270 ms" }, steps: [
+    { k: "now", t: "Drops frames for another or a finished message_request_id" },
+    { k: "now", t: "<code>ClientBroadcaster.emit()</code>: adds stream_id + seq, stores in Durable Object storage, sends to every browser" } ] },
+  { id: "s20", lane: "browser", trigger: true, title: "First token on screen", sum: "handleMessage() → applyFrame → assistant_delta renders", steps: [
+    { k: "now", t: "<code>PartyKitChatTransport.handleMessage()</code> → applyFrame → assistant_delta chunks render" } ] },
+];
+
+// style: main = today's flow · new = proposed flow · link = a focus step feeding a send step
+const EDGES = [
+  ["f0", "f1", "new"], ["f1", "f2", "new"], ["f1", "f3", "new"], ["f3", "f4", "new"], ["f4", "f5", "new"], ["f5", "f6", "new"],
+  ["s0", "s1"], ["s1", "s2"], ["s2", "s3"], ["s3", "s4"], ["s4", "s5"], ["s5", "s6"], ["s6", "s7"], ["s7", "s8"],
+  ["s8", "s9"], ["s9", "s10"], ["s10", "s11"], ["s11", "s12"],
+  ["s12", "s13", "main", "today"], ["s13", "s14", "main", "today"],
+  ["s12", "s13p", "new", "next"], ["s13p", "s14", "new", "next"],
+  ["f6", "s13p", "link", "next"],
+  ["s14", "s15"], ["s15", "s16"], ["s16", "s17"], ["s17", "s18"], ["s18", "s19"], ["s19", "s20"],
+];
+
+
+const COLW = 236, GAPX = 54, ROWGAP = 22, TOP = 34;
+const state = { next: true, selected: null };
+const canvas = document.getElementById("canvas");
+const drawer = document.getElementById("drawer");
+const byId = Object.fromEntries(NODES.filter(n => n.id).map(n => [n.id, n]));
+
+function visible(n) {
+  if (n.band === "focus" || (n.id && n.id.startsWith("f"))) return state.next;
+  if (n.only === "today") return !state.next;
+  if (n.only === "next") return state.next;
+  return true;
+}
+const laneX = i => i * (COLW + GAPX);
+const width = laneX(3) + COLW;
+
+function render() {
+  canvas.innerHTML = "";
+  canvas.style.width = width + "px";
+  canvas.style.setProperty("--colw", COLW + "px");
+  LANES.forEach((name, i) => {
+    const h = document.createElement("div");
+    h.className = "lanehead c-" + LANE_KEYS[i];
+    h.style.left = laneX(i) + "px";
+    h.innerHTML = `<i></i>${name}`;
+    canvas.appendChild(h);
+    const ln = document.createElement("div");
+    ln.className = "laneline";
+    ln.style.left = (laneX(i) + COLW / 2) + "px";
+    canvas.appendChild(ln);
+  });
+  let y = TOP;
+  for (const n of NODES) {
+    if (!visible(n)) continue;
+    if (n.band) {
+      const b = document.createElement("div");
+      b.className = "band" + (n.band === "focus" ? " new" : "");
+      b.style.top = y + "px";
+      b.innerHTML = `<h2>${n.title}</h2><p>${n.text}</p>`;
+      canvas.appendChild(b);
+      y += b.offsetHeight + 18;
+      continue;
+    }
+    const el = document.createElement("div");
+    const cls = n.isNew ? "c-new" : "c-" + n.lane;
+    el.className = `node ${cls}` + (n.trigger ? " trigger" : "") + (state.selected === n.id ? " selected" : "");
+    el.id = "n-" + n.id;
+    el.dataset.id = n.id;
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.style.left = laneX(L[n.lane]) + "px";
+    el.style.top = y + "px";
+    let badges = "";
+    if (n.tags) badges += n.tags.map(t => `<span class="bdg">${t}</span>`).join("");
+    if (state.next && n.changed) badges += n.changed.map(t => `<span class="bdg">changed by ${t}</span>`).join("");
+    if (n.ms) badges += `<span class="bdg ms">${n.ms.now}</span>` + (state.next && n.ms.next ? `<span class="bdg">${n.ms.next}</span>` : "");
+    const count = n.steps ? n.steps.length : 0;
+    el.innerHTML =
+      (count ? `<span class="n-sub" aria-hidden="true">${count}</span>` : "") +
+      `<div class="n-title">${n.title}</div>` +
+      (n.sum ? `<div class="n-foot"><span class="n-metric">${n.sum}</span></div>` : "") +
+      (badges ? `<div class="n-badges">${badges}</div>` : "");
+    canvas.appendChild(el);
+    y += el.offsetHeight + ROWGAP;
+  }
+  canvas.style.height = (y + 20) + "px";
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.id = "edges";
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", y + 20);
+  svg.innerHTML = `<defs>
+    <marker id="a-main" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z" fill="#4d5f7e"/></marker>
+    <marker id="a-new" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z" fill="#4fc26b"/></marker>
+  </defs>`;
+  canvas.appendChild(svg);
+  drawEdges(svg);
+}
+
+function drawEdges(svg) {
+  const box = id => {
+    const e = document.getElementById("n-" + id);
+    if (!e) return null;
+    const l = e.offsetLeft, t = e.offsetTop;
+    return { l, t, r: l + e.offsetWidth, b: t + e.offsetHeight, cx: l + e.offsetWidth / 2 };
+  };
+  let out = "";
+  for (const [from, to, style = "main", mode = "both"] of EDGES) {
+    if (mode === "today" && state.next) continue;
+    if (mode === "next" && !state.next) continue;
+    const a = box(from), b = box(to);
+    if (!a || !b) continue;
+    const hot = state.selected && (state.selected === from || state.selected === to);
+    const dim = state.selected && !hot;
+    const cls = "edge" + (style === "new" ? " new" : style === "link" ? " link" : "") + (hot ? " hot" : "") + (dim ? " dim" : "");
+    const marker = style === "main" ? "a-main" : "a-new";
+    let d, label = "";
+    if (style === "link") {
+      const y = (b.t + b.b) / 2;
+      const x = Math.max(a.cx, b.r + 24);
+      d = `M${a.cx} ${a.b} V${y} H${b.r + 2}`;
+      label = `<text class="edge-label" x="${a.cx + 6}" y="${y - 6}">the parked run receives the turn</text>`;
+    } else if (Math.abs(a.cx - b.cx) < 2) {
+      d = `M${a.cx} ${a.b} V${b.t - 2}`;
+    } else {
+      const mid = a.b + 11;
+      d = `M${a.cx} ${a.b} V${mid} H${b.cx} V${b.t - 2}`;
+    }
+    out += `<path class="${cls}" d="${d}" marker-end="url(#${marker})"/>${label}`;
+  }
+  svg.insertAdjacentHTML("beforeend", out);
+}
+
+function stepBox(s) {
+  const swap = state.next && s.next;
+  let cls = s.k === "note" ? "note" : s.k;
+  let text = s.t;
+  if (s.k === "skip" && !state.next) cls = "now";
+  if (swap) { cls = "new"; text = s.next; }
+  if (cls === "note") return `<p class="dgm-cap">${text}</p>`;
+  const why = (state.next && (s.k === "skip" || swap) && s.why) ? `<span class="why">${s.why}</span>` : "";
+  return `<div class="dgm-box ${cls === "now" ? "" : cls}"><span class="t">${text}</span>${why}</div>`;
+}
+
+function openDrawer(id) {
+  const n = byId[id];
+  state.selected = id;
+  const lane = LANES[L[n.lane]];
+  drawer.className = "drawer open " + (n.isNew ? "c-new" : "c-" + n.lane);
+  drawer.setAttribute("aria-hidden", "false");
+  document.getElementById("drHead").innerHTML =
+    `<div class="dr-eyebrow">${lane}${n.isNew ? " · proposed " + (n.tags || []).join(" ") : ""}</div>` +
+    `<h2 class="dr-title" style="font-family:var(--mono);font-size:15px">${n.title}</h2>` +
+    `<p class="dr-caption">${n.sum || ""}</p>` +
+    `<button class="dr-close" id="drClose" type="button" aria-label="Close">✕</button>`;
+  let body = "";
+  if (n.ms) body += `<p class="dr-note"><b>${n.ms.now}</b>${state.next && n.ms.next ? ` · <span style="color:var(--new)">${n.ms.next}</span>` : ""}</p>`;
+  if (n.steps && n.steps.length) {
+    const parts = [];
+    n.steps.forEach((s, i) => {
+      const html = stepBox(s);
+      if (parts.length && !html.startsWith('<p class="dgm-cap"')) parts.push('<div class="dgm-arrow">↓</div>');
+      parts.push(html);
+    });
+    body += `<div class="dr-sect">Internal steps</div><div class="subdiag steps">${parts.join("")}</div>`;
+  } else {
+    body += `<p class="dr-desc">No internal steps; this marks where the flow starts or ends.</p>`;
+  }
+  const ins = EDGES.filter(e => e[1] === id && edgeOn(e)).map(e => byId[e[0]]);
+  const outs = EDGES.filter(e => e[0] === id && edgeOn(e)).map(e => byId[e[1]]);
+  const chips = list => list.length ? list.map(m => `<button class="chip" data-go="${m.id}">${m.title}</button>`).join("") : '<span class="chip-none">None</span>';
+  body += `<div class="dr-sect">Comes from</div><div class="chips">${chips(ins)}</div>`;
+  body += `<div class="dr-sect">Goes to</div><div class="chips">${chips(outs)}</div>`;
+  document.getElementById("drBody").innerHTML = body;
+  document.getElementById("drClose").addEventListener("click", closeDrawer);
+  render();
+}
+function edgeOn(e) {
+  const mode = e[3] || "both";
+  return !(mode === "today" && state.next) && !(mode === "next" && !state.next);
+}
+function closeDrawer() {
+  state.selected = null;
+  drawer.className = "drawer";
+  drawer.setAttribute("aria-hidden", "true");
+  render();
+}
+
+canvas.addEventListener("click", e => {
+  const node = e.target.closest(".node");
+  if (node) openDrawer(node.dataset.id);
+});
+canvas.addEventListener("keydown", e => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const node = e.target.closest(".node");
+  if (!node) return;
+  e.preventDefault();
+  openDrawer(node.dataset.id);
+});
+document.getElementById("drBody").addEventListener("click", e => {
+  const chip = e.target.closest("[data-go]");
+  if (!chip) return;
+  openDrawer(chip.dataset.go);
+  const el = document.getElementById("n-" + chip.dataset.go);
+  if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+
+function setMode(next) {
+  state.next = next;
+  document.getElementById("mode-next").classList.toggle("on", next);
+  document.getElementById("mode-today").classList.toggle("on", !next);
+  if (state.selected && !visible(byId[state.selected])) closeDrawer();
+  else if (state.selected) openDrawer(state.selected);
+  else render();
+}
+document.getElementById("mode-today").addEventListener("click", () => setMode(false));
+document.getElementById("mode-next").addEventListener("click", () => setMode(true));
+document.getElementById("legendToggle").addEventListener("click", () => document.getElementById("legend").classList.toggle("closed"));
+
+render();
+</script>
+</body>
+</html>
