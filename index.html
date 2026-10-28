@@ -102,7 +102,7 @@ const L = { browser: 0, realtime: 1, api: 2, temporal: 3 };
 // k: now = runs today · new = proposed · skip = leaves the send path when the proposal ships · note = context
 // A step with `next` shows its `t` today and `next` once the proposals are on.
 const NODES = [
-  { band: "focus", title: "Before send", text: "#1 runs when the empty new-chat view appears. #6 and #7 run on the first keystroke. Nothing here depends on the message." },
+  { band: "focus", title: "Before send", text: "#1 runs when the empty new-chat view appears. #6 and #7 run when the user starts composing. Nothing here depends on the message." },
   { id: "f0", lane: "browser", trigger: true, isNew: true, title: "New-chat view opens", sum: "Page load or a New chat click", tags: ["#1"], steps: [
     { k: "new", t: "Fires on every page load and New chat click; it costs the backend nothing, so it needs no limit" },
     { k: "note", t: "On the console the composer is already focused when the page loads, so there is no separate focus event to hook" } ] },
@@ -114,8 +114,14 @@ const NODES = [
     { k: "new", t: "<code>authenticateConnection()</code> unseals <code>?session=</code> with IRON_SESSION_SECRET" },
     { k: "new", t: "The socket idles until the first <code>user_message</code> frame" },
     { k: "note", t: "Room join does no chat-existence check today, so it can run before the chat row exists" } ] },
-  { id: "fk", lane: "browser", trigger: true, isNew: true, title: "First keystroke", sum: "The user starts typing in the new chat", tags: ["#6", "#7"], steps: [
-    { k: "new", t: "Fires once per chat" },
+  { id: "fk", lane: "browser", trigger: true, isNew: true, title: "User starts composing", sum: "First keystroke, paste, upload or @-mention", tags: ["#6", "#7"], steps: [
+    { k: "new", t: "First keystroke in the composer" },
+    { k: "new", t: "A paste into the composer" },
+    { k: "new", t: "An attachment upload starting; uploads take seconds" },
+    { k: "new", t: "The @-mention picker opening" },
+    { k: "new", t: "Ask Reevo opened from a record page or a shortcut, with an empty composer" },
+    { k: "new", t: "Whichever comes first fires, once per chat" },
+    { k: "note", t: "Suggested-prompt chips fill and send at once, so they skip <code>_prepare</code> and run cold" },
     { k: "note", t: "Typing arrives seconds before send. Frontend telemetry should confirm that lead time beats the ~1–2 s prepare" } ] },
   { id: "f3", lane: "api", isNew: true, title: "POST /api/v1/chat/_prepare", sum: "{ chat_id } · all the work that does not need the message", tags: ["#6", "#7"], steps: [
     { k: "new", t: "Same Bearer access token as <code>_connect</code>" },
@@ -142,7 +148,9 @@ const NODES = [
     { k: "note", t: "~3–5 extra Temporal actions per prepared turn; the contract change sits behind <code>workflow.patched()</code>" } ] },
 
   { band: "send", title: "On send", text: "Runs after the user hits send. With the proposals on, the struck-through steps have already happened at focus." },
-  { id: "s0", lane: "browser", trigger: true, title: "Prompt entered", sum: "The user hits send" },
+  { id: "s0", lane: "browser", trigger: true, title: "Prompt entered", sum: "The user hits send", steps: [
+    { k: "now", t: "Typed prompt, or a suggested-prompt chip that fills the composer and sends at once" },
+    { k: "note", t: "A suggested prompt runs cold: no <code>_prepare</code>, today's path. It still gets #1, because the socket opened with the new-chat view" } ] },
   { id: "s1", lane: "browser", title: "handleMessageSubmit()", sum: "prompt, chatSource, files, annotations", steps: [
     { k: "now", t: "<code>usePaywall()</code> with resources <code>\"ASK_REEVO_MAIN\"</code> allows access" },
     { k: "now", t: "prompt: str · chatSource: ChatTraceSource" },
@@ -204,11 +212,13 @@ const NODES = [
     { k: "now", t: "ChatAgentWorkflowInput: chat_id, agent_deps, transport_config, message_history, variant_config, file_attachments" },
     { k: "now", t: "id policy: TERMINATE_EXISTING" },
     { k: "now", t: "The HTTP response to PartyKit waits for this call" } ] },
-  { id: "s13p", lane: "api", only: "next", isNew: true, title: "execute_update(deliver turn)", sum: "Hands the turn to the run prepared at focus", tags: ["#7"], steps: [
-    { k: "skip", t: "<code>temporal_client.start_workflow()</code>", why: "#7: the run already exists" },
+  { id: "s13p", lane: "api", only: "next", isNew: true, title: "execute_update_with_start_workflow()", sum: "Delivers the turn to the prepared run, or starts one; send never waits on prepare", tags: ["#7"], steps: [
+    { k: "skip", t: "<code>temporal_client.start_workflow()</code>", why: "#7: replaced by update-with-start; a plain start with TERMINATE_EXISTING would kill the prepared run" },
+    { k: "new", t: "No run yet (suggested prompt, or prepare not called): starts one, as today" },
+    { k: "new", t: "Run still on its prerequisites: the Update waits inside it and runs once it parks, no later than today" },
+    { k: "new", t: "Run parked and ready: the turn goes straight in" },
     { k: "new", t: "Update payload: the message, intent, skill scores and message_history" },
-    { k: "new", t: "The HTTP response to PartyKit waits for the Update to be accepted" },
-    { k: "note", t: "No prepared run (expired, not ready yet, or the user never typed before sending): falls back to <code>start_workflow()</code>" } ] },
+    { k: "note", t: "Available in our temporalio 1.33.0" } ] },
   { id: "s14", lane: "temporal", title: "ChatAgentWorkflow._run_impl()", sum: "Prerequisites, then the agent run", changed: ["#7"], ms: { now: "Workflow start → model ~570 ms", next: "−0.3 to −0.5 s with #7" }, steps: [
     { k: "now", t: "New chat: title activity, not awaited → ChatTitleUpdateEvent" },
     { k: "skip", t: "<code>create_assistant_message_activity</code>, awaited; sends MessageStartEvent", why: "#7: done by the prepared run at focus" },
