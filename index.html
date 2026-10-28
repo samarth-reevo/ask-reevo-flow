@@ -121,6 +121,7 @@ const NODES = [
     { k: "new", t: "The @-mention picker opening" },
     { k: "new", t: "Ask Reevo opened from a record page or a shortcut, with an empty composer" },
     { k: "new", t: "Whichever comes first fires, once per chat" },
+    { k: "note", t: "A send before prepare finishes runs cold, exactly as today" },
     { k: "note", t: "Suggested-prompt chips fill and send at once, so they skip <code>_prepare</code> and run cold" },
     { k: "note", t: "Typing arrives seconds before send. Frontend telemetry should confirm that lead time beats the ~1–2 s prepare" } ] },
   { id: "f3", lane: "api", isNew: true, title: "POST /api/v1/chat/_prepare", sum: "{ chat_id } · all the work that does not need the message", tags: ["#6", "#7"], steps: [
@@ -203,7 +204,7 @@ const NODES = [
     { k: "now", t: "Tools from CHAT_TOOL_REGISTRY: ToolSpec → ToolVersion (func, description, requires_approval)" } ] },
   { id: "s12", lane: "api", title: "ChatVariantService.render_system_prompt()", sum: "Fragments become the system prompt", changed: ["#6"], steps: [
     { k: "now", t: "Each fragment name → <code>PromptFragment(name, content, cadence)</code>" },
-    { k: "now", t: "Static cadence fragments rendered into the system prompt", next: "Static part reused from the render cached by <code>_prepare</code>, when the variant matches", why: "#6" },
+    { k: "now", t: "Static cadence fragments rendered into the system prompt", next: "Static part reused from the render cached by <code>_prepare</code>, when it finished and the variant matches; otherwise rendered as today", why: "#6" },
     { k: "now", t: "per_turn and per_loop cadences render later" },
     { k: "now", t: "<code>select_catalog_skills()</code> → SkillService → AgentFSRepository" },
     { k: "now", t: "<code>message_history = [SystemPromptPart, ...history]</code>" } ] },
@@ -212,13 +213,11 @@ const NODES = [
     { k: "now", t: "ChatAgentWorkflowInput: chat_id, agent_deps, transport_config, message_history, variant_config, file_attachments" },
     { k: "now", t: "id policy: TERMINATE_EXISTING" },
     { k: "now", t: "The HTTP response to PartyKit waits for this call" } ] },
-  { id: "s13p", lane: "api", only: "next", isNew: true, title: "execute_update_with_start_workflow()", sum: "Delivers the turn to the prepared run, or starts one; send never waits on prepare", tags: ["#7"], steps: [
-    { k: "skip", t: "<code>temporal_client.start_workflow()</code>", why: "#7: replaced by update-with-start; a plain start with TERMINATE_EXISTING would kill the prepared run" },
-    { k: "new", t: "No run yet (suggested prompt, or prepare not called): starts one, as today" },
-    { k: "new", t: "Run still on its prerequisites: the Update waits inside it and runs once it parks, no later than today" },
-    { k: "new", t: "Run parked and ready: the turn goes straight in" },
-    { k: "new", t: "Update payload: the message, intent, skill scores and message_history" },
-    { k: "note", t: "Available in our temporalio 1.33.0" } ] },
+  { id: "s13p", lane: "api", only: "next", isNew: true, title: "execute_update(deliver turn)", sum: "Uses the prepared run only if it finished; otherwise the turn runs cold", tags: ["#7"], steps: [
+    { k: "new", t: "Update sent to the chat's workflow id; its validator rejects it unless the run is parked" },
+    { k: "new", t: "Parked: the turn goes straight in, with the message, intent, skill scores and message_history" },
+    { k: "new", t: "Rejected (prepare unfinished) or no run (prepare never called): runs today's <code>start_workflow()</code> cold" },
+    { k: "note", t: "TERMINATE_EXISTING ends the unfinished prepared run; it must clean up its empty assistant row when terminated" } ] },
   { id: "s14", lane: "temporal", title: "ChatAgentWorkflow._run_impl()", sum: "Prerequisites, then the agent run", changed: ["#7"], ms: { now: "Workflow start → model ~570 ms", next: "−0.3 to −0.5 s with #7" }, steps: [
     { k: "now", t: "New chat: title activity, not awaited → ChatTitleUpdateEvent" },
     { k: "skip", t: "<code>create_assistant_message_activity</code>, awaited; sends MessageStartEvent", why: "#7: done by the prepared run at focus" },
